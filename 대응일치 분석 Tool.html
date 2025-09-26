@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>대응일치 맵 (CA) – 붙여넣고 바로 분석</title>
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ml-matrix@6.10.4/lib/bundle.min.js"></script>
+<style>
+  :root{--bg:#0b0c10;--card:#111217;--ink:#e6e7ea;--muted:#a8adb7;--error:#dc2626;--warning:#f59e0b}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Noto Sans KR,sans-serif}
+  .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+  h1{font-size:22px;margin:0 0 12px}
+  .card{background:var(--card);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:16px;margin-bottom:16px}
+  .error-card{background:#2d1b1b;border:1px solid var(--error)}
+  .warning-card{background:#2d2415;border:1px solid var(--warning)}
+  textarea{width:100%;min-height:180px;border-radius:12px;border:1px solid #2a2d36;background:#0f1117;color:var(--ink);padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  select,button{border-radius:10px;border:1px solid #2b2f38;background:#0f1117;color:var(--ink);padding:8px 12px}
+  button.primary{background:linear-gradient(180deg,#3b82f6,#2563eb);border:none;cursor:pointer}
+  button.ghost{background:#0f1117}
+  button:disabled{opacity:0.5;cursor:not-allowed}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .hint{color:var(--muted);font-size:12px}
+  .list{max-height:220px;overflow:auto;border:1px solid #2b2f38;border-radius:10px;padding:8px;background:#0f1117}
+  .list label:hover{background-color:#1a1d24 !important}
+  .list input[type="checkbox"]{margin-right:4px}
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  #chart{height:560px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:8px 10px;border-bottom:1px solid #2b2f38;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  .spinner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--card);padding:20px;border-radius:10px;z-index:1000;border:1px solid #2b2f38}
+  .log{background:#0f1117;border:1px solid #2b2f38;border-radius:8px;padding:8px;margin-top:8px;max-height:120px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
+  .guide{background:#0f1117;border:1px solid #2b2f38;border-radius:8px;padding:12px;margin-top:12px}
+  .guide ul{margin:4px 0;padding-left:16px}
+  .guide li{margin:4px 0;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>대응일치 맵 (Correspondence Analysis)</h1>
+
+  <div class="card">
+    <div class="hint" style="margin-bottom:6px">
+      ① 아래에 **표를 그대로 붙여넣기** → ② **분석하기** 클릭<br>
+      • 첫 행은 열 이름(브랜드/속성), 첫 열은 항목명(속성/브랜드). • % 포함해도 됩니다.
+    </div>
+    <textarea id="raw" placeholder="여기에 데이터를 붙여주세요."></textarea>
+    <div class="controls" style="margin-top:10px">
+      <label>데이터 방향
+        <select id="orientation">
+          <option value="auto">자동 감지 (권장)</option>
+          <option value="rowsAreAttributes">행=속성 · 열=브랜드</option>
+          <option value="rowsAreBrands">행=브랜드 · 열=속성</option>
+        </select>
+      </label>
+      <button id="analyzeBtn" class="primary">분석하기 (표 반영)</button>
+      <button id="downloadBtn" class="ghost" style="margin-left:auto" disabled>그래프 저장(PNG)</button>
+    </div>
+  </div>
+
+  <div id="config" class="card" style="display:none">
+    <strong>분석 대상 선택 (선택 해제 시 제외)</strong>
+    <div class="grid" style="margin-top:8px">
+      <div>
+        <h4 style="margin:4px 0 8px;color:var(--muted)">브랜드 목록</h4>
+        <div class="list" id="brandList"></div>
+      </div>
+      <div>
+        <h4 style="margin:4px 0 8px;color:var(--muted)">속성 목록</h4>
+        <div class="list" id="attrList"></div>
+      </div>
+    </div>
+    <div class="controls" style="margin-top:10px">
+      <label>표시 차원:
+        <select id="dimSelector">
+          <option value="2">2차원 (권장)</option>
+          <option value="3">3차원</option>
+        </select>
+      </label>
+      <button id="rerunBtn" class="primary">선택 반영하여 다시 분석</button>
+      <button id="selectAllBtn" class="ghost">전체 선택</button>
+      <button id="clearAllBtn" class="ghost">전체 해제</button>
+    </div>
+  </div>
+
+  <div id="results" class="card" style="display:none">
+    <div id="chart"></div>
+    <div class="grid" style="margin-top:10px">
+      <div>
+        <h3 style="margin:8px 0 6px">차원 설명력</h3>
+        <table id="eigTable">
+          <thead><tr><th>차원</th><th>고유값</th><th>설명력(%)</th><th>누적(%)</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div>
+        <div style="color:#a8adb7;font-size:12px">
+          • 파란 점: 브랜드(행), 주황색 ×: 속성(열)<br>
+          • 값은 비율(%) 또는 양수 빈도여야 합니다.
+        </div>
+        <div id="processingLog" class="log" style="display:none"></div>
+      </div>
+    </div>
+    
+    <div class="guide">
+      <h3 style="margin:8px 0 6px">결과 해석 가이드</h3>
+      <ul>
+        <li>가까이 위치한 브랜드와 속성은 강한 연관성을 나타냅니다</li>
+        <li>원점에서 멀리 떨어진 요소일수록 특별한 특성을 가집니다</li>
+        <li>1차원이 전체 변량의 대부분을 설명한다면 주요 경쟁축을 의미합니다</li>
+        <li>누적 설명력이 80% 이상이면 2차원 표현이 적절합니다</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+// 전역 유틸리티
+const $ = (id) => document.getElementById(id);
+const fmt = (x, d = 2) => Number.isFinite(x) ? x.toFixed(d) : "";
+const sum = arr => arr.reduce((a, b) => a + b, 0);
+const transpose = A => A[0].map((_, j) => A.map(r => r[j]));
+const matMul = (A, B) => {
+  const m = A.length, n = A[0].length, p = B[0].length;
+  const out = Array.from({length: m}, () => Array(p).fill(0));
+  for (let i = 0; i < m; i++) {
+    for (let k = 0; k < n; k++) {
+      const aik = A[i][k];
+      for (let j = 0; j < p; j++) out[i][j] += aik * B[k][j];
+    }
+  }
+  return out;
+};
+const matVec = (A, v) => A.map(row => row.reduce((s, val, i) => s + val * v[i], 0));
+const dotProduct = (a, b) => a.reduce((s, v, i) => s + v*b[i], 0);
+
+// 로깅
+function log(message, type = 'info') {
+  const logDiv = $('processingLog');
+  if (!logDiv) return;
+  const timestamp = new Date().toLocaleTimeString();
+  const color = type === 'error' ? '#dc2626' : type === 'warning' ? '#f59e0b' : '#a8adb7';
+  logDiv.innerHTML += `<div style="color:${color}">[${timestamp}] ${message}</div>`;
+  logDiv.scrollTop = logDiv.scrollHeight;
+  logDiv.style.display = '';
+}
+
+// 파싱/전처리
+function splitFlexible(line) {
+  const t = line.trim();
+  if (!t) return [];
+  if (t.includes("\t")) return t.split("\t").map(s => s.trim());
+  if (t.includes(",")) return t.split(",").map(s => s.trim());
+  return t.split(/\s{2,}|\s(?=\S*%)/g).map(s => s.trim());
+}
+function toNumber(v) {
+  if (typeof v !== "string") return v;
+  const cleaned = v.replace(/\s/g, "")
+                   .replace(/[%％]/g, "")
+                   .replace(/[,，]/g, "")
+                   .replace(/[^\d.-]/g, "");
+  if (cleaned === "" || cleaned === "-") return NaN;
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : NaN;
+}
+function preprocessData(rawData, rowLabels) {
+  let warnings = 0;
+  const processed = rawData.map((row, i) => 
+    row.map((cell) => {
+      const num = toNumber(cell);
+      if (!Number.isFinite(num)) {
+        if (warnings < 5) { log(`유효하지 않은 값 발견 (${rowLabels[i]}): ${cell} → 0으로 대체`, 'warning'); warnings++; }
+        return 0;
+      }
+      if (num < 0) { log(`음수 값 발견 (${rowLabels[i]}): ${num} → 절댓값으로 변환`, 'warning'); return Math.abs(num); }
+      return num;
+    })
+  );
+  if (warnings >= 5) log(`총 ${warnings}개의 잘못된 값이 처리되었습니다.`, 'warning');
+  return processed;
+}
+
+// 상태
+let state = { brands: [], attrs: [], matrix: [] };
+
+// 방향 추정
+function guessOrientation(rows) {
+  const h0 = (rows[0][0] || "").toLowerCase();
+  if (/이상/.test(h0)) return 'rowsAreAttributes';
+  const firstData = rows[1] || [];
+  const numsInRow = firstData.slice(1).filter(x => /\d/.test(x)).length;
+  if (numsInRow >= 2) return 'rowsAreAttributes';
+  return 'rowsAreBrands';
+}
+
+// 입력 검증
+function validateInputData(matrix, brands, attrs) {
+  if (!matrix || matrix.length < 2 || matrix[0].length < 2) throw new Error('최소 2×2 크기의 데이터가 필요합니다.');
+  if (brands.length < 2 || attrs.length < 2) throw new Error('브랜드와 속성은 각각 최소 2개 이상이어야 합니다.');
+  const allNonNegative = matrix.every(row => row.every(val => Number.isFinite(val) && val >= 0));
+  if (!allNonNegative) throw new Error('모든 데이터 값은 0 이상이어야 합니다.');
+  const total = matrix.flat().reduce((s, v) => s + v, 0);
+  if (total <= 0) throw new Error('데이터의 총합이 0보다 커야 합니다.');
+  return true;
+}
+
+// SVD (ml-matrix → fallback)
+function powerMethodEigen(A) {
+  const n = A.length, maxEigenvalues = Math.min(3, n);
+  const eigenvalues = [], eigenvectors = [];
+  let currentMatrix = A.map(r => r.slice());
+  for (let k = 0; k < maxEigenvalues; k++) {
+    let v = Array(n).fill(0); v[k % n] = 1;
+    let lambda = 0, converged = false;
+    for (let iter = 0; iter < 80; iter++) {
+      const Av = matVec(currentMatrix, v);
+      const newLambda = dotProduct(v, Av) / dotProduct(v, v);
+      if (Math.abs(newLambda - lambda) < 1e-7) { lambda = newLambda; converged = true; break; }
+      lambda = newLambda;
+      const norm = Math.sqrt(dotProduct(Av, Av));
+      if (norm > 1e-12) v = Av.map(x => x / norm);
+    }
+    if (!converged || Math.abs(lambda) < 1e-10) break;
+    eigenvalues.push(Math.max(0, lambda)); eigenvectors.push(v.slice());
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) currentMatrix[i][j] -= lambda * v[i] * v[j];
+  }
+  while (eigenvalues.length < n) { eigenvalues.push(0); const z = Array(n).fill(0); z[eigenvalues.length-1] = 1; eigenvectors.push(z); }
+  const pairs = eigenvalues.map((val, i) => ({ val, vec: eigenvectors[i] })).sort((a, b) => b.val - a.val);
+  return { eigenvalues: pairs.map(p => p.val), eigenvectors: pairs.map(p => p.vec) };
+}
+function simpleSVD(A) {
+  const At = transpose(A), AtA = matMul(At, A);
+  const { eigenvalues, eigenvectors } = powerMethodEigen(AtA);
+  const s = eigenvalues.map(v => Math.sqrt(Math.max(0, v)));
+
+  // eigenvectors: 행 배열(각 행이 고유벡터). V는 열에 고유벡터를 갖도록 전치
+  const V = transpose(eigenvectors);            // (n x n)
+
+  // ★ 수정: AV는 반드시 A * V 여야 함
+  const AV = matMul(A, V);                      // (m x n)
+
+  const r = A.length, c = A[0].length, k = Math.min(r, c);
+  const U = Array.from({length: r}, () => Array(k).fill(0));
+  for (let j = 0; j < k; j++) if (s[j] > 1e-10) {
+    for (let i = 0; i < r; i++) U[i][j] = AV[i][j] / s[j];
+  }
+  return { u: U, v: V, s };
+}
+function safeSVD(matrix) {
+  try {
+    const Matrix = window.ML ? window.ML.Matrix : (window.MLMatrix ? window.MLMatrix.Matrix : null);
+    if (!Matrix) throw new Error('ml-matrix 라이브러리를 사용할 수 없습니다.');
+    const svd = new Matrix(matrix).svd();
+    return { u: svd.leftSingularVectors.to2DArray(), v: svd.rightSingularVectors.to2DArray(), s: svd.diagonal };
+  } catch (e) {
+    log(`ml-matrix SVD 실패: ${e.message}. 자체 SVD 사용`, 'warning');
+    return simpleSVD(matrix);
+  }
+}
+
+// 셀렉터 UI
+function buildSelectors() {
+  const mk = (name, type, index) => {
+    const sanitizedName = name.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;transition:background 0.2s" 
+                   onmouseover="this.style.background='#1a1d24'" 
+                   onmouseout="this.style.background='transparent'">
+      <input type="checkbox" data-type="${type}" data-name="${sanitizedName}" data-index="${index}" checked 
+             style="cursor:pointer" onchange="updateSelectionCount()">
+      <span style="font-size:13px;line-height:1.3">${name}</span>
+    </label>`;
+  };
+  $('brandList').innerHTML = state.brands.map((n,i)=>mk(n,'brand',i)).join("");
+  $('attrList').innerHTML  = state.attrs.map((n,i)=>mk(n,'attr',i)).join("");
+  updateSelectionCount();
+  $('selectAllBtn').onclick = () => { document.querySelectorAll('#brandList input,#attrList input').forEach(i=>i.checked=true); updateSelectionCount(); };
+  $('clearAllBtn').onclick  = () => { document.querySelectorAll('#brandList input,#attrList input').forEach(i=>i.checked=false); updateSelectionCount(); };
+}
+function updateSelectionCount() {
+  const bc = document.querySelectorAll('#brandList input:checked').length;
+  const ac = document.querySelectorAll('#attrList input:checked').length;
+  const bt = document.querySelectorAll('#brandList input').length;
+  const at = document.querySelectorAll('#attrList input').length;
+  const bh = document.querySelector('#config h4:first-of-type');
+  const ah = document.querySelector('#config h4:last-of-type');
+  if (bh){ bh.innerHTML = `브랜드 목록 (${bc}/${bt} 선택)`; bh.style.color = bc>=2 ? 'var(--muted)' : 'var(--error)'; }
+  if (ah){ ah.innerHTML = `속성 목록 (${ac}/${at} 선택)`;  ah.style.color = ac>=2 ? 'var(--muted)' : 'var(--error)'; }
+  const rerunBtn = $('rerunBtn'); if (rerunBtn){ const ok = bc>=2 && ac>=2; rerunBtn.disabled = !ok; rerunBtn.style.opacity = ok? '1':'0.5'; rerunBtn.title = ok? '' : '브랜드와 속성을 각각 2개 이상 선택해주세요'; }
+}
+
+// 메인 분석
+function analyze() {
+  const text = $('raw').value.trim();
+  if (!text) { alert("표를 먼저 붙여넣어 주세요."); return; }
+  try {
+    log('분석 시작', 'info');
+    const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+    const rows = lines.map(splitFlexible).filter(r => r.length > 0);
+    const header = rows[0];
+    if (header.length < 2) throw new Error("첫 행에 열 이름(브랜드/속성)이 있어야 합니다.");
+
+    let orientation = $('orientation').value;
+    if (orientation === 'auto') { orientation = guessOrientation(rows); log(`데이터 방향 자동 감지: ${orientation}`, 'info'); }
+
+    const colNames = header.slice(1);
+    let rowLabels = [], rawData = [];
+    for (let i = 1; i < rows.length; i++) {
+      const cells = rows[i]; if (cells.length < 2) continue;
+      rowLabels.push(cells[0]); rawData.push(cells.slice(1));
+    }
+    const data = preprocessData(rawData, rowLabels);
+
+    if (orientation === 'rowsAreAttributes') {
+      // ★ ‘이상적’ 포함: 첫 헤더 셀까지 모두 브랜드로 사용
+      const allBrands = header; // ['이상적', 'MG...', 'NH...', ...]
+      const properData = data.map(row => {
+        const adjusted = row.slice();
+        while (adjusted.length < allBrands.length) adjusted.push(0);
+        return adjusted.slice(0, allBrands.length);
+      });
+      state = { brands: allBrands, attrs: rowLabels, matrix: transpose(properData) };
+    } else {
+      state = { brands: rowLabels, attrs: colNames, matrix: data };
+    }
+
+    log(`데이터 크기: ${state.brands.length} 브랜드 × ${state.attrs.length} 속성`, 'info');
+    buildSelectors();
+    $('config').style.display = '';
+    setTimeout(runCA, 100);
+  } catch (e) {
+    log(`분석 실패: ${e.message}`, 'error');
+    showErrorMessage(e.message);
+  }
+}
+
+// CA
+function runCA() {
+  try {
+    const bIdx = Array.from(document.querySelectorAll('#brandList input:checked')).map(i => parseInt(i.dataset.index,10));
+    const aIdx = Array.from(document.querySelectorAll('#attrList  input:checked')).map(i => parseInt(i.dataset.index,10));
+    if (bIdx.length < 2 || aIdx.length < 2) throw new Error("브랜드/속성은 각각 2개 이상 선택하세요.");
+
+    const bSel = bIdx.map(i => state.brands[i]);
+    const aSel = aIdx.map(i => state.attrs[i]);
+
+    let X = bIdx.map(i => aIdx.map(j => Math.max(0, state.matrix[i][j] || 0)));
+    validateInputData(X, bSel, aSel);
+
+    // 1) 1차 정규화로 valid 판단
+    const grand = sum(X.flat());
+    const P = X.map(row => row.map(v => v / grand));
+    const r = P.map(row => sum(row));
+    const c = transpose(P).map(col => sum(col));
+    const validRows = r.map((m,i)=>m>1e-10?i:-1).filter(i=>i>=0);
+    const validCols = c.map((m,i)=>m>1e-10?i:-1).filter(i=>i>=0);
+    if (validRows.length < 2 || validCols.length < 2) throw new Error('유효한 데이터가 부족합니다. 모든 행과 열의 합이 0보다 커야 합니다.');
+
+    // 2) 필터링 후 재정규화(P2)
+    const Xf = validRows.map(i => validCols.map(j => X[i][j]));
+    const brands_filtered = validRows.map(i => bSel[i]);
+    const attrs_filtered  = validCols.map(j => aSel[j]);
+    const grand2 = sum(Xf.flat());
+    const P2 = Xf.map(row => row.map(v => v / grand2));
+    const r2 = P2.map(row => sum(row));
+    const c2 = transpose(P2).map(col => sum(col));
+
+    // 3) 이중표준화: Z = Dr^{-1/2} (P2 - r2 c2ᵀ) Dc^{-1/2}
+    const rows = P2.length, cols = P2[0].length;
+    const R = Array.from({length: rows}, (_, i) =>
+      Array.from({length: cols}, (_, j) => P2[i][j] - r2[i]*c2[j])
+    );
+    const eps = 1e-12;
+    const DrInvSqrt = r2.map(m => 1/Math.sqrt(Math.max(m, eps)));
+    const DcInvSqrt = c2.map(m => 1/Math.sqrt(Math.max(m, eps)));
+    const Z = R.map((row, i) => row.map((v, j) => DrInvSqrt[i] * v * DcInvSqrt[j]));
+
+    // 4) SVD
+    const svd = safeSVD(Z);
+    if (!svd || !svd.s || svd.s.length < 1) throw new Error('행렬 분해에 실패했습니다.');
+    const U = svd.u, V = svd.v, sv = svd.s;
+
+    // 5) 관성 (유효 차원 K까지만)
+    const K = Math.min(rows - 1, cols - 1);
+    const svK = sv.slice(0, K);
+    const inertiasAll = svK.map(x => x*x);
+    const totalInertia = sum(inertiasAll);
+
+    // 6) 주좌표 (dims 일관 적용)
+    const maxDims = Math.min(3, svK.length);
+    const dims = Math.min(parseInt($('dimSelector').value) || 2, maxDims);
+
+    const rowCoords = U.map((row,i) =>
+      row.slice(0, dims).map((u_k, k) => svK[k] * u_k / Math.sqrt(Math.max(r2[i], eps)))
+    );
+    const colCoords = V.map((row,j) =>
+      row.slice(0, dims).map((v_k, k) => svK[k] * v_k / Math.sqrt(Math.max(c2[j], eps)))
+    );
+
+    render(brands_filtered, attrs_filtered, rowCoords, colCoords, inertiasAll.slice(0, dims), totalInertia, dims);
+
+    // (선택) 정합성 로그: 총관성의 두 정의 비교
+    const chiOverN = R.reduce((acc, row, i) =>
+      acc + row.reduce((s, v, j) => s + (v*v) / Math.max(r2[i]*c2[j], eps), 0), 0);
+    const diff = Math.abs(chiOverN - totalInertia);
+    log(`정합성 체크: Σσ²(K)=${fmt(totalInertia,6)}, Σ((P-rc)²/(rc))=${fmt(chiOverN,6)}, 차이=${fmt(diff,6)}`, diff<1e-6?'info':'warning');
+
+  } catch (e) {
+    log(`CA 분석 오류: ${e.message}`, 'error');
+    showErrorMessage(`분석 중 오류가 발생했습니다: ${e.message}`);
+  }
+}
+
+// 렌더 + PNG 버튼 활성화
+function render(brands, attrs, rowCoords, colCoords, inertias, totalInertia, dims = 2) {
+  $('results').style.display = '';
+  const pct = inertias.map(inertia => 100 * inertia / totalInertia);
+
+  const downloadBtn = $('downloadBtn');
+  if (downloadBtn) downloadBtn.disabled = true; // 렌더 중 비활성
+
+  const mk2d = () => {
+    const rTrace = { x: rowCoords.map(r=>r[0]), y: rowCoords.map(r=>r[1]||0), text: brands,
+      mode:"markers+text", textposition:"top center", name:"브랜드", marker:{size:9, color:'#1f77b4'} };
+    const cTrace = { x: colCoords.map(r=>r[0]), y: colCoords.map(r=>r[1]||0), text: attrs,
+      mode:"markers+text", textposition:"top center", name:"속성", marker:{size:9, symbol:"x", color:'#ff7f0e'} };
+    return Plotly.newPlot('chart', [rTrace, cTrace], {
+      paper_bgcolor:"#111217", plot_bgcolor:"#111217", font:{color:"#e6e7ea"},
+      xaxis:{zeroline:true, zerolinecolor:"#3b3f4a", title:`Dimension 1 (${fmt(pct[0]||0,1)}%)`, gridcolor:"#2a2d36"},
+      yaxis:{zeroline:true, zerolinecolor:"#3b3f4a", title:`Dimension 2 (${fmt(pct[1]||0,1)}%)`, gridcolor:"#2a2d36"},
+      margin:{l:40,r:20,t:10,b:40}, legend:{orientation:"h",y:1.02,yanchor:"bottom",x:0}
+    }, {displaylogo:false,responsive:true});
+  };
+  const mk3d = () => {
+    const rTrace = { x: rowCoords.map(r=>r[0]), y: rowCoords.map(r=>r[1]||0), z: rowCoords.map(r=>r[2]||0), text: brands,
+      mode:"markers+text", textposition:"top center", name:"브랜드", type:"scatter3d", marker:{size:6, color:'#1f77b4'} };
+    const cTrace = { x: colCoords.map(r=>r[0]), y: colCoords.map(r=>r[1]||0), z: colCoords.map(r=>r[2]||0), text: attrs,
+      mode:"markers+text", textposition:"top center", name:"속성", type:"scatter3d", marker:{size:6, symbol:"x", color:'#ff7f0e'} };
+    return Plotly.newPlot('chart', [rTrace, cTrace], {
+      paper_bgcolor:"#111217", plot_bgcolor:"#111217", font:{color:"#e6e7ea"},
+      scene:{ xaxis:{title:`Dimension 1 (${fmt(pct[0]||0,1)}%)`,gridcolor:"#3b3f4a"},
+              yaxis:{title:`Dimension 2 (${fmt(pct[1]||0,1)}%)`,gridcolor:"#3b3f4a"},
+              zaxis:{title:`Dimension 3 (${fmt(pct[2]||0,1)}%)`,gridcolor:"#3b3f4a"}, bgcolor:"#111217"},
+      margin:{l:0,r:0,t:10,b:0}, legend:{orientation:"h",y:1.02,yanchor:"bottom",x:0}
+    }, {displaylogo:false,responsive:true});
+  };
+
+  const promise = (dims === 3 && inertias.length >= 3) ? mk3d() : mk2d();
+  promise.then(() => { if (downloadBtn) downloadBtn.disabled = false; });
+
+  // 표 채우기
+  const tbody = $('eigTable').querySelector('tbody');
+  tbody.innerHTML = "";
+  let cum = 0;
+  inertias.forEach((inertia, i) => {
+    const p = 100 * inertia / totalInertia; cum += p;
+    tbody.insertAdjacentHTML('beforeend',
+      `<tr><td>Dim ${i + 1}</td><td>${fmt(inertia, 4)}</td><td>${fmt(p, 2)}</td><td>${fmt(cum, 2)}</td></tr>`);
+  });
+
+  const twoDimCum = inertias.slice(0, 2).reduce((s, inertia) => s + 100 * inertia / totalInertia, 0);
+  log(`분석 완료. 표시 차원=${dims}, 2차원 누적 설명력: ${fmt(twoDimCum, 1)}%`, 'info');
+  if (twoDimCum < 60 && dims === 2) log(`주의: 2차원 설명력이 ${fmt(twoDimCum, 1)}%로 낮습니다. 3차원 보기를 고려해보세요.`, 'warning');
+}
+
+// 스피너/에러
+function showSpinner(){ const d=document.createElement('div'); d.id='spinner'; d.className='spinner'; d.innerHTML='분석 중...'; document.body.appendChild(d); }
+function hideSpinner(){ const d=$('spinner'); if(d) d.remove(); }
+function showErrorMessage(message) {
+  const errorDiv = document.createElement('div');
+  errorDiv.className = 'card error-card';
+  errorDiv.innerHTML = `<strong>오류:</strong> ${message}`;
+  $('results').innerHTML = '';
+  $('results').appendChild(errorDiv);
+  $('results').style.display = '';
+}
+
+// 대용량 핸들러
+function analyzeInChunks() {
+  const text = $('raw').value.trim();
+  const CHUNK_SIZE = 1000;
+  if (!text) { alert("표를 먼저 붙여넣어 주세요."); return; }
+  if (text.length > CHUNK_SIZE) {
+    showSpinner(); $('analyzeBtn').disabled = true;
+    setTimeout(() => {
+      try { analyze(); } 
+      catch (e) { showErrorMessage('대용량 데이터 처리 중 오류가 발생했습니다: ' + e.message); }
+      finally { hideSpinner(); $('analyzeBtn').disabled = false; }
+    }, 100);
+  } else {
+    analyze();
+  }
+}
+
+// 이벤트
+$('analyzeBtn').onclick = analyzeInChunks;
+$('downloadBtn').onclick = () => {
+  try {
+    Plotly.downloadImage('chart', { format:'png', filename:'CA_map', width:1200, height:800 });
+  } catch (e) { alert('그래프 저장에 실패했습니다: ' + e.message); }
+};
+$('rerunBtn').onclick = runCA;
+$('dimSelector').onchange = () => { if ($('results').style.display !== 'none') runCA(); };
+
+// ★ 첫 로드시 항상 빈 입력 (localStorage 로드 제거)
+document.addEventListener('DOMContentLoaded', () => {
+  $('raw').value = '';
+  $('raw').title = 'Ctrl+Enter로 빠른 분석 가능';
+});
+
+// 저장 안 함 (완전히 빈 세션 스타트)
+window.addEventListener('beforeunload', () => { /* no-op */ });
+
+// 단축키
+$('raw').addEventListener('keydown', (e) => { if (e.ctrlKey && e.key === 'Enter') analyzeInChunks(); });
+</script>
+</body>
+</html>
