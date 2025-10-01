@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>대응일치 맵 (CA)</title>
 <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/ml-matrix@6.10.4/lib/bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ml-matrix@6.10.4/dist/ml-matrix.min.js"></script>
 <style>
   :root{--bg:#0b0c10;--card:#111217;--ink:#e6e7ea;--muted:#a8adb7;--error:#dc2626;--warning:#f59e0b}
   html,body{height:100%}
@@ -64,11 +64,11 @@
     <strong>분석 대상 선택 (선택 해제 시 제외)</strong>
     <div class="grid" style="margin-top:8px">
       <div>
-        <h4 style="margin:4px 0 8px;color:var(--muted)">브랜드 목록</h4>
+        <h4 id="brand-list-header" style="margin:4px 0 8px;color:var(--muted)">브랜드 목록</h4>
         <div class="list" id="brandList"></div>
       </div>
       <div>
-        <h4 style="margin:4px 0 8px;color:var(--muted)">속성 목록</h4>
+        <h4 id="attr-list-header" style="margin:4px 0 8px;color:var(--muted)">속성 목록</h4>
         <div class="list" id="attrList"></div>
       </div>
     </div>
@@ -255,7 +255,7 @@ function safeSVD(matrix) {
     const svd = new Matrix(matrix).svd();
     return { u: svd.leftSingularVectors.to2DArray(), v: svd.rightSingularVectors.to2DArray(), s: svd.diagonal };
   } catch (e) {
-    log(`ml-matrix SVD 실패: ${e.message}. 자체 SVD 사용`, 'warning');
+    log(`ml-matrix SVD 실패: ${e.message} 자체 SVD 사용`, 'warning');
     return simpleSVD(matrix);
   }
 }
@@ -283,10 +283,10 @@ function updateSelectionCount() {
   const ac = document.querySelectorAll('#attrList input:checked').length;
   const bt = document.querySelectorAll('#brandList input').length;
   const at = document.querySelectorAll('#attrList input').length;
-  const bh = document.querySelector('#config h4:first-of-type');
-  const ah = document.querySelector('#config h4:last-of-type');
-  if (bh){ bh.innerHTML = `브랜드 목록 (${bc}/${bt} 선택)`; bh.style.color = bc>=2 ? 'var(--muted)' : 'var(--error)'; }
-  if (ah){ ah.innerHTML = `속성 목록 (${ac}/${at} 선택)`;  ah.style.color = ac>=2 ? 'var(--muted)' : 'var(--error)'; }
+  const bh = document.getElementById('brand-list-header');
+  const ah = document.getElementById('attr-list-header');
+  if (bh){ bh.textContent = `브랜드 목록 (${bc}/${bt})`; bh.style.color = bc>=2 ? 'var(--muted)' : 'var(--error)'; }
+  if (ah){ ah.textContent = `속성 목록 (${ac}/${at})`;  ah.style.color = ac>=2 ? 'var(--muted)' : 'var(--error)'; }
   const rerunBtn = $('rerunBtn'); if (rerunBtn){ const ok = bc>=2 && ac>=2; rerunBtn.disabled = !ok; rerunBtn.style.opacity = ok? '1':'0.5'; rerunBtn.title = ok? '' : '브랜드와 속성을 각각 2개 이상 선택해주세요'; }
 }
 
@@ -517,4 +517,3 @@ $('raw').addEventListener('keydown', (e) => { if (e.ctrlKey && e.key === 'Enter'
 </script>
 </body>
 </html>
-
